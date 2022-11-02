@@ -1,4 +1,17 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <Compile Remove="InputFiles\**" />
+    <Compile Remove="OutputFiles\**" />
+    <EmbeddedResource Remove="InputFiles\**" />
+    <EmbeddedResource Remove="OutputFiles\**" />
+    <None Remove="InputFiles\**" />
+    <None Remove="OutputFiles\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TestsGenerator.Core\TestsGenerator.Core.csproj" />
+  </ItemGroup>
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
