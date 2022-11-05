@@ -6,9 +6,6 @@ using System.Threading.Tasks;
 
 namespace TestsGenerator.Core.Models
 {
-    internal class FileModel
-    {
-        public string Name { get; set; }
-        public string Content { get; set; }
-    }
+    public record ReadFromFileOutput(string Name, string Content);
+    public record GenerateTestFileOutput(string Name, string Content);
 }
