@@ -18,6 +18,10 @@ namespace TestsGenerator.Core
             int generateTestFileRestriction, 
             int writeToFileRestriction)
         {
+            var readFromFileBlockOptions = new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = readFromFileRestriction };
+            var generateTestFileOptions = new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = generateTestFileRestriction };
+            var writeToFileBlockOptions = new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = writeToFileRestriction };
+
 
             var readFromFileBlock = new TransformBlock<string, ReadFromFileOutput>(async path =>
             {
@@ -30,7 +34,8 @@ namespace TestsGenerator.Core
                     result = new ReadFromFileOutput(name, content);
                 }
                 return result;
-            });
+            },
+            readFromFileBlockOptions);
 
             var generateTestFileBlock = new TransformBlock<ReadFromFileOutput, GenerateTestFileOutput>(input =>
             {
@@ -118,7 +123,8 @@ namespace TestsGenerator.Core
                 GenerateTestFileOutput result = new(input.Name, resultCompilationUnit.ToString());
 
                 return result;
-            });
+            },
+            generateTestFileOptions);
 
             var writeToFileBlock = new ActionBlock<GenerateTestFileOutput>(async input =>
             {
@@ -128,7 +134,8 @@ namespace TestsGenerator.Core
                     byte[] info = new UTF8Encoding(true).GetBytes(input.Content);
                     await fileStream.WriteAsync(info);
                 }
-            });
+            },
+            writeToFileBlockOptions);
 
             var linkOptions = new DataflowLinkOptions { PropagateCompletion = true };
 
