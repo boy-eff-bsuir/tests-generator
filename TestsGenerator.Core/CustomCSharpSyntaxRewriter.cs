@@ -13,7 +13,7 @@ namespace TestsGenerator.Core
     internal class CustomCSharpSyntaxRewriter : CSharpSyntaxRewriter
     {
         private string _currentNamespace;
-        private NamespaceGeneratorService _namespaceGeneratorService;
+        private readonly NamespaceGeneratorService _namespaceGeneratorService;
 
         public CustomCSharpSyntaxRewriter(NamespaceGeneratorService namespaceGeneratorService)
         {

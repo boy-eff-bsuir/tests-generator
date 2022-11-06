@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Formatting;
 using TestsGenerator.Core.DTOs;
+using TestsGenerator.Core.Extensions;
 using TestsGenerator.Core.Models;
 using TestsGenerator.Core.Services;
 
@@ -12,6 +13,7 @@ namespace TestsGenerator.Core
 {
     public class Generator
     {
+        private const string _sut = "_sut";
         public async Task GenerateAsync(string[] files,
             string storePath,
             int readFromFileRestriction, 
@@ -47,6 +49,10 @@ namespace TestsGenerator.Core
 
                 var xunit = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName("Xunit"));
                 usings.Add(xunit);
+
+                var moq = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName("Moq"));
+                usings.Add(moq);
+                
                 var namespaceGeneratorService = new NamespaceGeneratorService();
                 var visitor = new CustomCSharpSyntaxRewriter(namespaceGeneratorService);
                 visitor.Visit(root);
@@ -60,39 +66,62 @@ namespace TestsGenerator.Core
 
                     foreach (var classDto in classes)
                     {
-                        if (classDto.Methods.Count() == 0)
+                        if (!classDto.Methods.Any())
                         {
                             continue;
                         }
 
-                        var methods = new List<MethodDeclarationSyntax>();
+                        var members = new List<MemberDeclarationSyntax>();
+
+                        var publicModifier = SyntaxFactory.Token(SyntaxKind.PublicKeyword);
+                        var identifier = SyntaxFactory.Identifier(classDto.Name + "Tests");
+
+                        var sutField = CreatePrivateField(classDto.Name, _sut);
+                        members.Add(sutField);
+                    
+                        foreach (var param in classDto.ConstructorParams)
+                        {
+                            var field = CreatePrivateField(Mocked(param.Type.ToString()), Underscored(param.Identifier.ValueText));
+                            members.Add(field);
+                        }
+
+                        var block = CreateConstructorBlock(classDto.Name, classDto.ConstructorParams.ToArray());
+
+                        var ctor = SyntaxFactory.ConstructorDeclaration(
+                            new SyntaxList<AttributeListSyntax>(),
+                            new SyntaxTokenList() { publicModifier },
+                            identifier,
+                            SyntaxFactory.ParameterList(),
+                            null,
+                            block
+                            );
+
+                        members.Add(ctor);
+
                         foreach (var methodDto in classDto.Methods)
                         {
-                            methods.Add(
-                               CreateTestMethodDeclaration(methodDto.Name + "Test")
+                            members.Add(
+                                CreateTestMethodDeclaration(methodDto.Name + "Test", methodDto.ReturnType, methodDto.Parameters.ToArray())
                             );
                             if (methodDto.Count > 1)
                             {
                                 for (int i = 2; i <= methodDto.Count; i++)
                                 {
-                                    methods.Add(CreateTestMethodDeclaration(methodDto.Name + i + "Test"));
+                                    members.Add(CreateTestMethodDeclaration(methodDto.  Name + i + "Test", methodDto.ReturnType, methodDto.Parameters.ToArray()));
                                 }
                             }
                         }
 
-                        var modifier = SyntaxFactory.Token(SyntaxKind.PublicKeyword);
-                        var identifier = SyntaxFactory.Identifier(classDto.Name + "Tests");
-
                         var declarationToAdd = SyntaxFactory.ClassDeclaration(
                             new SyntaxList<AttributeListSyntax>(),                  //Attribute list
-                            new SyntaxTokenList() { modifier },                     //Modifiers
+                            new SyntaxTokenList() { publicModifier },                     //Modifiers
                             identifier,                                             //Identifier
                             null,                                                   //Type parameter list
                             null,                                                   //Base list
                             new SyntaxList<TypeParameterConstraintClauseSyntax>(),  //Constraint clauses list
-                            SyntaxFactory.List<MemberDeclarationSyntax>(methods));
+                            SyntaxFactory.List<MemberDeclarationSyntax>(members));
 
-                        classDeclarations.Add(declarationToAdd);
+                            classDeclarations.Add(declarationToAdd);
                     }
 
                     if (classDeclarations.Count == 0)
@@ -111,7 +140,7 @@ namespace TestsGenerator.Core
                         );
 
                     namespaces.Add(namespaceDeclaration);
-                 }
+                }
 
                 var resultCompilationUnit = SyntaxFactory.CompilationUnit(
                     new SyntaxList<ExternAliasDirectiveSyntax>(),
@@ -129,11 +158,9 @@ namespace TestsGenerator.Core
             var writeToFileBlock = new ActionBlock<GenerateTestFileOutput>(async input =>
             {
                 System.Console.WriteLine($"Writing file {input.Name}");
-                using (FileStream fileStream = File.Create(storePath + $"\\{input.Name}"))
-                {
-                    byte[] info = new UTF8Encoding(true).GetBytes(input.Content);
-                    await fileStream.WriteAsync(info);
-                }
+                using FileStream fileStream = File.Create(storePath + $"\\{input.Name}");
+                byte[] info = new UTF8Encoding(true).GetBytes(input.Content);
+                await fileStream.WriteAsync(info);
             },
             writeToFileBlockOptions);
 
@@ -152,8 +179,9 @@ namespace TestsGenerator.Core
             writeToFileBlock.Completion.Wait();
         }
 
-        private MethodDeclarationSyntax CreateTestMethodDeclaration(string methodName)
+        private static MethodDeclarationSyntax CreateTestMethodDeclaration(string methodName, TypeSyntax returnType, params ParameterSyntax[] methodParams)
         {
+            var block = CreateTestMethodBlock(methodName, returnType, methodParams);
             return SyntaxFactory.MethodDeclaration(
                 new SyntaxList<AttributeListSyntax>(),
                 new SyntaxTokenList(SyntaxFactory.Token(SyntaxKind.PublicKeyword)),
@@ -163,8 +191,91 @@ namespace TestsGenerator.Core
                 null,
                 SyntaxFactory.ParameterList(),
                 new SyntaxList<TypeParameterConstraintClauseSyntax>(),
-                SyntaxFactory.Block(SyntaxFactory.ParseStatement(@"Assert.Fail(""autogenerated"");")),
+                block,
                 null);
+        }
+        
+        private static FieldDeclarationSyntax CreatePrivateField(string type, string name)
+        {
+            var privateModifier = SyntaxFactory.Token(SyntaxKind.PrivateKeyword);
+            return SyntaxFactory.FieldDeclaration(
+                new SyntaxList<AttributeListSyntax>(),
+                new SyntaxTokenList() { privateModifier },
+                SyntaxFactory.VariableDeclaration(SyntaxFactory.IdentifierName(type), SyntaxFactory.SeparatedList(new[] { SyntaxFactory.VariableDeclarator(name) }))
+                );
+        }
+
+        private static string Mocked(string name)
+        {
+            return "Mock<" + name + ">";
+        }
+
+        private static string Underscored(string name)
+        {
+            return "_" + name;
+        }
+
+        private static BlockSyntax CreateConstructorBlock(string sutClassName, params ParameterSyntax[] ctorParams)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("{");
+            if (!ctorParams.Any())
+            {
+                sb.AppendLine($"{_sut} = new {sutClassName}();");
+                sb.AppendLine("}");
+                return (BlockSyntax)SyntaxFactory.ParseStatement(sb.ToString());
+            }
+
+            foreach (var param in ctorParams)
+            {
+                sb.AppendLine($"{Underscored(param.Identifier.ValueText)} = new {Mocked(param.Type.ToString())}();");
+            }
+            sb.Append($"{_sut} = new {sutClassName}(");
+            
+            var last = ctorParams.Last();
+            foreach (var param in ctorParams)
+            {
+                sb.Append($"{Underscored(param.Identifier.ValueText)}.Object");
+                if (param != last)
+                {
+                    sb.Append(',');
+                }
+            }
+            sb.AppendLine(");");
+            sb.AppendLine("}");
+            return (BlockSyntax)SyntaxFactory.ParseStatement(sb.ToString());
+        }
+
+        private static BlockSyntax CreateTestMethodBlock(string methodName, TypeSyntax returnType, params ParameterSyntax[] methodParams)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("{");
+            foreach(var param in methodParams)
+            {
+                sb.AppendLine($"{param.Type.ToString()} {param.Identifier.ValueText} = {param.Type.GetDefaultValue()};");
+            }
+            sb.AppendLine(String.Empty);
+            sb.Append($"{returnType.ToString()} result = {_sut}.{methodName}(");
+            if (methodParams.Any())
+            {
+                var last = methodParams.Last();
+                foreach (var param in methodParams)
+                {
+                    sb.Append($"{param.Identifier.ValueText}");
+                    if (param != last)
+                    {
+                        sb.Append(',');
+                    }
+                }
+            }
+            sb.AppendLine(");");
+            sb.AppendLine(String.Empty);
+
+            sb.AppendLine($"{returnType.ToString()} expected = {returnType.GetDefaultValue()};");
+            sb.AppendLine("Assert.That(result, Is.EqualTo(expected));");
+            sb.AppendLine(@"Assert.Fail(""autogenerated"");");
+            sb.AppendLine("}");
+            return (BlockSyntax)SyntaxFactory.ParseStatement(sb.ToString());
         }
     }
 }

@@ -14,7 +14,7 @@ namespace Faker.Core.Services
         private List<IValueGenerator> _generators;
         private IGeneratorConfig _config;
 
-        public GeneratorService(IGeneratorConfig generatorConfig)
+        public GeneratorService(IGeneratorConfig config)
         {
             InitializeGenerators();
             _config = config;
