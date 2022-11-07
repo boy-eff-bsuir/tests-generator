@@ -9,6 +9,10 @@ using Faker.Core.Records;
 
 namespace Faker.Core.Services
 {
+    public struct Kek
+    {
+
+    }
     public class GeneratorService : IGeneratorService
     {
         private List<IValueGenerator> _generators;
@@ -25,7 +29,7 @@ namespace Faker.Core.Services
             InitializeGenerators();
         }
 
-        public object Generate(Type type, IGeneratorContext context, string name = null, Type userType = null)
+        public object Generate(Type type, IGeneratorContext context, string name = null, Type userType = null, Kek kek)
         {
             if (name != null && _config != null && userType != null)
             {

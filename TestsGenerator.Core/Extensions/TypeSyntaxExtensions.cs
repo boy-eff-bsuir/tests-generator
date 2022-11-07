@@ -1,4 +1,5 @@
-﻿using Microsoft.CodeAnalysis.CSharp.Syntax;
+﻿using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,21 +10,27 @@ namespace TestsGenerator.Core.Extensions
 {
     public static class TypeSyntaxExtensions
     {
-        public static string GetDefaultValue(this TypeSyntax typeSyntax)
+        public static LiteralExpressionSyntax GetDefaultValue(this TypeSyntax typeSyntax)
         {
             switch (typeSyntax.ToString())
             {
                 case "string":
                     {
-                        return string.Empty;
+                        return SyntaxFactory.LiteralExpression(
+                                    SyntaxKind.StringLiteralExpression,
+                                    SyntaxFactory.Literal(""));
                     }
                 case "int":
                     {
-                        return "0";
+                        return SyntaxFactory.LiteralExpression(
+                                    SyntaxKind.NumericLiteralExpression,
+                                    SyntaxFactory.Literal(0));
                     }
                 default:
                     {
-                        return "null";
+                        return SyntaxFactory.LiteralExpression(
+                                    SyntaxKind.DefaultLiteralExpression,
+                                    SyntaxFactory.Token(SyntaxKind.DefaultKeyword));
                     }
             }
         }

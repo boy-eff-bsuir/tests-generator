@@ -24,7 +24,6 @@ namespace TestsGenerator.Core
             var generateTestFileOptions = new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = generateTestFileRestriction };
             var writeToFileBlockOptions = new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = writeToFileRestriction };
 
-
             var readFromFileBlock = new TransformBlock<string, ReadFromFileOutput>(async path =>
             {
                 System.Console.WriteLine($"Opening file {path}");
@@ -85,7 +84,7 @@ namespace TestsGenerator.Core
                             members.Add(field);
                         }
 
-                        var block = CreateConstructorBlock(classDto.Name, classDto.ConstructorParams.ToArray());
+                        var block = CreateTestClassConstructorBlock(classDto.Name, classDto.ConstructorParams.ToArray());
 
                         var ctor = SyntaxFactory.ConstructorDeclaration(
                             new SyntaxList<AttributeListSyntax>(),
@@ -197,12 +196,16 @@ namespace TestsGenerator.Core
         
         private static FieldDeclarationSyntax CreatePrivateField(string type, string name)
         {
-            var privateModifier = SyntaxFactory.Token(SyntaxKind.PrivateKeyword);
             return SyntaxFactory.FieldDeclaration(
-                new SyntaxList<AttributeListSyntax>(),
-                new SyntaxTokenList() { privateModifier },
-                SyntaxFactory.VariableDeclaration(SyntaxFactory.IdentifierName(type), SyntaxFactory.SeparatedList(new[] { SyntaxFactory.VariableDeclarator(name) }))
-                );
+                    SyntaxFactory.VariableDeclaration(
+                        SyntaxFactory.IdentifierName(type))
+                    .WithVariables(
+                        SyntaxFactory.SingletonSeparatedList<VariableDeclaratorSyntax>(
+                            SyntaxFactory.VariableDeclarator(
+                                SyntaxFactory.Identifier(name)))))
+                .WithModifiers(
+                    SyntaxFactory.TokenList(
+                        SyntaxFactory.Token(SyntaxKind.PrivateKeyword)));
         }
 
         private static string Mocked(string name)
@@ -215,67 +218,165 @@ namespace TestsGenerator.Core
             return "_" + name;
         }
 
-        private static BlockSyntax CreateConstructorBlock(string sutClassName, params ParameterSyntax[] ctorParams)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("{");
-            if (!ctorParams.Any())
-            {
-                sb.AppendLine($"{_sut} = new {sutClassName}();");
-                sb.AppendLine("}");
-                return (BlockSyntax)SyntaxFactory.ParseStatement(sb.ToString());
-            }
-
-            foreach (var param in ctorParams)
-            {
-                sb.AppendLine($"{Underscored(param.Identifier.ValueText)} = new {Mocked(param.Type.ToString())}();");
-            }
-            sb.Append($"{_sut} = new {sutClassName}(");
-            
-            var last = ctorParams.Last();
-            foreach (var param in ctorParams)
-            {
-                sb.Append($"{Underscored(param.Identifier.ValueText)}.Object");
-                if (param != last)
-                {
-                    sb.Append(',');
-                }
-            }
-            sb.AppendLine(");");
-            sb.AppendLine("}");
-            return (BlockSyntax)SyntaxFactory.ParseStatement(sb.ToString());
-        }
-
         private static BlockSyntax CreateTestMethodBlock(string methodName, TypeSyntax returnType, params ParameterSyntax[] methodParams)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("{");
+            var declarations = new List<StatementSyntax>();
             foreach(var param in methodParams)
             {
-                sb.AppendLine($"{param.Type.ToString()} {param.Identifier.ValueText} = {param.Type.GetDefaultValue()};");
+                var type = param.Type.ToString();
+                var identifier = param.Identifier.ValueText;
+                var defaultValue = param.Type.GetDefaultValue();
+                declarations.Add(CreateLocalDeclarationStatement(type, identifier, defaultValue));
             }
-            sb.AppendLine(String.Empty);
-            sb.Append($"{returnType.ToString()} result = {_sut}.{methodName}(");
-            if (methodParams.Any())
-            {
-                var last = methodParams.Last();
-                foreach (var param in methodParams)
-                {
-                    sb.Append($"{param.Identifier.ValueText}");
-                    if (param != last)
-                    {
-                        sb.Append(',');
-                    }
-                }
-            }
-            sb.AppendLine(");");
-            sb.AppendLine(String.Empty);
 
-            sb.AppendLine($"{returnType.ToString()} expected = {returnType.GetDefaultValue()};");
-            sb.AppendLine("Assert.That(result, Is.EqualTo(expected));");
-            sb.AppendLine(@"Assert.Fail(""autogenerated"");");
-            sb.AppendLine("}");
-            return (BlockSyntax)SyntaxFactory.ParseStatement(sb.ToString());
+            var resultReturnType = returnType.ToString();
+            StatementSyntax actPart;
+            StatementSyntax assertExpectedInitializationPart = null;
+            StatementSyntax assertCompareWithExpectedPart = null;
+            var arguments = methodParams.Select(x => SyntaxFactory.Argument(SyntaxFactory.IdentifierName(x.Identifier.ValueText)));
+            if (resultReturnType == "void")
+            {
+                actPart = SyntaxFactory.ExpressionStatement(InvocationExpression(_sut, methodName, arguments.ToArray()));
+            }
+            else
+            {
+                actPart = CreateLocalDeclarationStatement(resultReturnType, "result", InvocationExpression(_sut, methodName, arguments.ToArray()));
+                assertExpectedInitializationPart = CreateLocalDeclarationStatement(resultReturnType, "expected", returnType.GetDefaultValue());
+                assertCompareWithExpectedPart = CreateAssertCompareWithExpectedStatement();
+            }
+            declarations.Add(actPart);
+            if (assertExpectedInitializationPart != null)
+            {
+                declarations.Add(assertExpectedInitializationPart);
+                declarations.Add(assertCompareWithExpectedPart);
+            }
+            var failed = CreateAssertFailedStatement();
+            declarations.Add(failed);
+
+            return SyntaxFactory.Block(declarations);
+        }
+
+        private static LocalDeclarationStatementSyntax CreateLocalDeclarationStatement(string type, string identifier, ExpressionSyntax expressionSyntax)
+        {
+            return SyntaxFactory.LocalDeclarationStatement(
+                SyntaxFactory.VariableDeclaration(
+                    SyntaxFactory.IdentifierName(type))
+                .WithVariables(
+                    SyntaxFactory.SingletonSeparatedList<VariableDeclaratorSyntax>(
+                        SyntaxFactory.VariableDeclarator(
+                            SyntaxFactory.Identifier(
+                                SyntaxFactory.TriviaList(),
+                                SyntaxKind.TypeKeyword,
+                                identifier,
+                                identifier,
+                                SyntaxFactory.TriviaList()))
+                        .WithInitializer(
+                            SyntaxFactory.EqualsValueClause(
+                                expressionSyntax)))));
+        }
+
+        private static ExpressionStatementSyntax CreateAssertCompareWithExpectedStatement()
+        {
+            return SyntaxFactory.ExpressionStatement(InvocationExpression("Assert", "That",
+                        SyntaxFactory.Argument(
+                            SyntaxFactory.IdentifierName("result")),
+                        SyntaxFactory.Argument(
+                            SyntaxFactory.InvocationExpression(
+                                SyntaxFactory.MemberAccessExpression(
+                                    SyntaxKind.SimpleMemberAccessExpression,
+                                    SyntaxFactory.IdentifierName("Is"),
+                                    SyntaxFactory.IdentifierName("EqualTo")))
+                            .WithArgumentList(
+                                SyntaxFactory.ArgumentList(
+                                    SyntaxFactory.SingletonSeparatedList<ArgumentSyntax>(
+                                        SyntaxFactory.Argument(
+                                            SyntaxFactory.IdentifierName("expected"))))))));
+        }
+
+        private static ExpressionStatementSyntax CreateAssertFailedStatement()
+        {
+            return SyntaxFactory.ExpressionStatement(
+                        SyntaxFactory.InvocationExpression(
+                            SyntaxFactory.MemberAccessExpression(
+                                SyntaxKind.SimpleMemberAccessExpression,
+                                SyntaxFactory.IdentifierName("Assert"),
+                                SyntaxFactory.IdentifierName("Fail")))
+                        .WithArgumentList(
+                            SyntaxFactory.ArgumentList(
+                                SyntaxFactory.SingletonSeparatedList<ArgumentSyntax>(
+                                    SyntaxFactory.Argument(
+                                        SyntaxFactory.LiteralExpression(
+                                            SyntaxKind.StringLiteralExpression,
+                                            SyntaxFactory.Literal("autogenerated")))))));
+        }
+
+        private static ExpressionSyntax InvocationExpression(string className, string methodName, params ArgumentSyntax[] args)
+        {
+            return SyntaxFactory.InvocationExpression(
+                       SyntaxFactory.MemberAccessExpression(
+                           SyntaxKind.SimpleMemberAccessExpression,
+                           SyntaxFactory.IdentifierName(className),
+                           SyntaxFactory.IdentifierName(methodName)))
+                   .WithArgumentList(
+                       SyntaxFactory.ArgumentList(
+                           SyntaxFactory.SeparatedList<ArgumentSyntax>(args)));
+        }
+
+        private static BlockSyntax CreateTestClassConstructorBlock(string sutType, params ParameterSyntax[] parameters)
+        {
+            var ctorParameters = new List<LocalDeclarationStatementSyntax>();
+            var args = new List<ArgumentSyntax>();
+            foreach (var param in parameters)
+            {
+                var identifier = param.Identifier.ValueText;
+                var type = param.Type.ToString();
+                var expression = CreateMockedObjectExpression(type);
+                var declaration = CreateLocalDeclarationStatement(type, identifier, expression);
+                //var declaration = CreateMockedDeclarationStatement(identifier, param.Type.ToString());
+                ctorParameters.Add(declaration);
+                args.Add(SyntaxFactory.Argument(SyntaxFactory.IdentifierName(identifier)));
+            }
+
+            var sutDeclaration = CreateSutDeclarationStatement(SyntaxFactory.SeparatedList(args), sutType);
+            ctorParameters.Add(sutDeclaration);
+            return SyntaxFactory.Block(ctorParameters);
+        }
+
+        private static ObjectCreationExpressionSyntax CreateMockedObjectExpression(string type)
+        {
+            return SyntaxFactory.ObjectCreationExpression(
+                        SyntaxFactory.GenericName(
+                            SyntaxFactory.Identifier("Mock"))
+                        .WithTypeArgumentList(
+                            SyntaxFactory.TypeArgumentList(
+                                SyntaxFactory.SingletonSeparatedList<TypeSyntax>(
+                                    SyntaxFactory.IdentifierName(type)))))
+                    .WithArgumentList(
+                        SyntaxFactory.ArgumentList());
+        }
+
+        private static LocalDeclarationStatementSyntax CreateSutDeclarationStatement(SeparatedSyntaxList<ArgumentSyntax> args, string type)
+        {
+            return SyntaxFactory.LocalDeclarationStatement(
+                        SyntaxFactory.VariableDeclaration(
+                            SyntaxFactory.IdentifierName(
+                                SyntaxFactory.Identifier(
+                                    SyntaxFactory.TriviaList(),
+                                    SyntaxKind.VarKeyword,
+                                    "var",
+                                    "var",
+                                    SyntaxFactory.TriviaList())))
+                        .WithVariables(
+                            SyntaxFactory.SingletonSeparatedList<VariableDeclaratorSyntax>(
+                                SyntaxFactory.VariableDeclarator(
+                                    SyntaxFactory.Identifier(_sut))
+                                .WithInitializer(
+                                    SyntaxFactory.EqualsValueClause(
+                                        SyntaxFactory.ObjectCreationExpression(
+                                            SyntaxFactory.IdentifierName(type))
+                                        .WithArgumentList(
+                                            SyntaxFactory.ArgumentList(args)))))));
         }
     }
 }
