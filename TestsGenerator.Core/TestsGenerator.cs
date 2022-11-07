@@ -1,12 +1,9 @@
 ﻿using System.Text;
-using System.Threading.Tasks.Dataflow;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Formatting;
-using TestsGenerator.Core.DTOs;
 using TestsGenerator.Core.Extensions;
-using TestsGenerator.Core.Models;
 using TestsGenerator.Core.Services;
 
 namespace TestsGenerator.Core
@@ -14,168 +11,118 @@ namespace TestsGenerator.Core
     public class Generator
     {
         private const string _sut = "_sut";
-        public async Task GenerateAsync(string[] files,
-            string storePath,
-            int readFromFileRestriction, 
-            int generateTestFileRestriction, 
-            int writeToFileRestriction)
+        public string Generate(string name, string content)
         {
-            var readFromFileBlockOptions = new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = readFromFileRestriction };
-            var generateTestFileOptions = new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = generateTestFileRestriction };
-            var writeToFileBlockOptions = new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = writeToFileRestriction };
+            
+            SyntaxTree tree = CSharpSyntaxTree.ParseText(content);
+            System.Console.WriteLine($"Generating tests class for file {name}");
+            var root = tree.GetCompilationUnitRoot();
 
-            var readFromFileBlock = new TransformBlock<string, ReadFromFileOutput>(async path =>
+            var usings = root.Usings.ToList();
+
+            var xunit = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName("Xunit"));
+            usings.Add(xunit);
+
+            var moq = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName("Moq"));
+            usings.Add(moq);
+            
+            var namespaceGeneratorService = new NamespaceGeneratorService();
+            var visitor = new CustomCSharpSyntaxRewriter(namespaceGeneratorService);
+            visitor.Visit(root);
+            var namespaces = new List<MemberDeclarationSyntax>();
+
+            foreach(var namespaceName in namespaceGeneratorService.Namespaces)
             {
-                System.Console.WriteLine($"Opening file {path}");
-                ReadFromFileOutput result;
-                using (StreamReader fileStream = File.OpenText(path))
-                {
-                    var name = Path.GetFileName(path);
-                    var content = await fileStream.ReadToEndAsync();
-                    result = new ReadFromFileOutput(name, content);
-                }
-                return result;
-            },
-            readFromFileBlockOptions);
-
-            var generateTestFileBlock = new TransformBlock<ReadFromFileOutput, GenerateTestFileOutput>(input =>
-            {
-                SyntaxTree tree = CSharpSyntaxTree.ParseText(input.Content);
-                System.Console.WriteLine($"Generating tests class for file {input.Name}");
-                var root = tree.GetCompilationUnitRoot();
-
-                var usings = root.Usings.ToList();
-
-                var xunit = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName("Xunit"));
-                usings.Add(xunit);
-
-                var moq = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName("Moq"));
-                usings.Add(moq);
+                var classes = namespaceGeneratorService.GetClassesByNamespace(namespaceName);
                 
-                var namespaceGeneratorService = new NamespaceGeneratorService();
-                var visitor = new CustomCSharpSyntaxRewriter(namespaceGeneratorService);
-                visitor.Visit(root);
-                var namespaces = new List<MemberDeclarationSyntax>();
+                var classDeclarations = new List<MemberDeclarationSyntax>();
 
-                foreach(var namespaceName in namespaceGeneratorService.Namespaces)
+                foreach (var classDto in classes)
                 {
-                    var classes = namespaceGeneratorService.GetClassesByNamespace(namespaceName);
-                    
-                    var classDeclarations = new List<MemberDeclarationSyntax>();
-
-                    foreach (var classDto in classes)
-                    {
-                        if (!classDto.Methods.Any())
-                        {
-                            continue;
-                        }
-
-                        var members = new List<MemberDeclarationSyntax>();
-
-                        var publicModifier = SyntaxFactory.Token(SyntaxKind.PublicKeyword);
-                        var identifier = SyntaxFactory.Identifier(classDto.Name + "Tests");
-
-                        var sutField = CreatePrivateField(classDto.Name, _sut);
-                        members.Add(sutField);
-                    
-                        foreach (var param in classDto.ConstructorParams)
-                        {
-                            var field = CreatePrivateField(Mocked(param.Type.ToString()), Underscored(param.Identifier.ValueText));
-                            members.Add(field);
-                        }
-
-                        var block = CreateTestClassConstructorBlock(classDto.Name, classDto.ConstructorParams.ToArray());
-
-                        var ctor = SyntaxFactory.ConstructorDeclaration(
-                            new SyntaxList<AttributeListSyntax>(),
-                            new SyntaxTokenList() { publicModifier },
-                            identifier,
-                            SyntaxFactory.ParameterList(),
-                            null,
-                            block
-                            );
-
-                        members.Add(ctor);
-
-                        foreach (var methodDto in classDto.Methods)
-                        {
-                            members.Add(
-                                CreateTestMethodDeclaration(methodDto.Name + "Test", methodDto.ReturnType, methodDto.Parameters.ToArray())
-                            );
-                            if (methodDto.Count > 1)
-                            {
-                                for (int i = 2; i <= methodDto.Count; i++)
-                                {
-                                    members.Add(CreateTestMethodDeclaration(methodDto.  Name + i + "Test", methodDto.ReturnType, methodDto.Parameters.ToArray()));
-                                }
-                            }
-                        }
-
-                        var declarationToAdd = SyntaxFactory.ClassDeclaration(
-                            new SyntaxList<AttributeListSyntax>(),                  //Attribute list
-                            new SyntaxTokenList() { publicModifier },                     //Modifiers
-                            identifier,                                             //Identifier
-                            null,                                                   //Type parameter list
-                            null,                                                   //Base list
-                            new SyntaxList<TypeParameterConstraintClauseSyntax>(),  //Constraint clauses list
-                            SyntaxFactory.List<MemberDeclarationSyntax>(members));
-
-                            classDeclarations.Add(declarationToAdd);
-                    }
-
-                    if (classDeclarations.Count == 0)
+                    if (!classDto.Methods.Any())
                     {
                         continue;
                     }
 
-                    var usingDirective = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName(namespaceName));
-                    usings.Add(usingDirective);
+                    var members = new List<MemberDeclarationSyntax>();
 
-                    var namespaceDeclaration = SyntaxFactory.NamespaceDeclaration(
-                        SyntaxFactory.IdentifierName(namespaceName + ".Tests"),
-                        new SyntaxList<ExternAliasDirectiveSyntax>(),
-                        new SyntaxList<UsingDirectiveSyntax>(),
-                        SyntaxFactory.List(classDeclarations)
+                    var publicModifier = SyntaxFactory.Token(SyntaxKind.PublicKeyword);
+                    var identifier = SyntaxFactory.Identifier(classDto.Name + "Tests");
+
+                    var sutField = CreatePrivateField(classDto.Name, _sut);
+                    members.Add(sutField);
+                
+                    foreach (var param in classDto.ConstructorParams)
+                    {
+                        var field = CreatePrivateField(Mocked(param.Type.ToString()), Underscored(param.Identifier.ValueText));
+                        members.Add(field);
+                    }
+
+                    var block = CreateTestClassConstructorBlock(classDto.Name, classDto.ConstructorParams.ToArray());
+
+                    var ctor = SyntaxFactory.ConstructorDeclaration(
+                        new SyntaxList<AttributeListSyntax>(),
+                        new SyntaxTokenList() { publicModifier },
+                        identifier,
+                        SyntaxFactory.ParameterList(),
+                        null,
+                        block
                         );
 
-                    namespaces.Add(namespaceDeclaration);
+                    members.Add(ctor);
+
+                    foreach (var methodDto in classDto.Methods)
+                    {
+                        members.Add(
+                            CreateTestMethodDeclaration(methodDto.Name + "Test", methodDto.ReturnType, methodDto.Parameters.ToArray())
+                        );
+                        if (methodDto.Count > 1)
+                        {
+                            for (int i = 2; i <= methodDto.Count; i++)
+                            {
+                                members.Add(CreateTestMethodDeclaration(methodDto.  Name + i + "Test", methodDto.ReturnType, methodDto.Parameters.ToArray()));
+                            }
+                        }
+                    }
+
+                    var declarationToAdd = SyntaxFactory.ClassDeclaration(
+                        new SyntaxList<AttributeListSyntax>(),                  //Attribute list
+                        new SyntaxTokenList() { publicModifier },                     //Modifiers
+                        identifier,                                             //Identifier
+                        null,                                                   //Type parameter list
+                        null,                                                   //Base list
+                        new SyntaxList<TypeParameterConstraintClauseSyntax>(),  //Constraint clauses list
+                        SyntaxFactory.List<MemberDeclarationSyntax>(members));
+
+                        classDeclarations.Add(declarationToAdd);
                 }
 
-                var resultCompilationUnit = SyntaxFactory.CompilationUnit(
+                if (classDeclarations.Count == 0)
+                {
+                    continue;
+                }
+
+                var usingDirective = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName(namespaceName));
+                usings.Add(usingDirective);
+
+                var namespaceDeclaration = SyntaxFactory.NamespaceDeclaration(
+                    SyntaxFactory.IdentifierName(namespaceName + ".Tests"),
                     new SyntaxList<ExternAliasDirectiveSyntax>(),
-                    SyntaxFactory.List(usings),
-                    new SyntaxList<AttributeListSyntax>(),
-                    SyntaxFactory.List(namespaces));
+                    new SyntaxList<UsingDirectiveSyntax>(),
+                    SyntaxFactory.List(classDeclarations)
+                    );
 
-                resultCompilationUnit = (CompilationUnitSyntax)Formatter.Format(resultCompilationUnit, new AdhocWorkspace());
-                GenerateTestFileOutput result = new(input.Name, resultCompilationUnit.ToString());
-
-                return result;
-            },
-            generateTestFileOptions);
-
-            var writeToFileBlock = new ActionBlock<GenerateTestFileOutput>(async input =>
-            {
-                System.Console.WriteLine($"Writing file {input.Name}");
-                using FileStream fileStream = File.Create(storePath + $"\\{input.Name}");
-                byte[] info = new UTF8Encoding(true).GetBytes(input.Content);
-                await fileStream.WriteAsync(info);
-            },
-            writeToFileBlockOptions);
-
-            var linkOptions = new DataflowLinkOptions { PropagateCompletion = true };
-
-            readFromFileBlock.LinkTo(generateTestFileBlock, linkOptions);
-            generateTestFileBlock.LinkTo(writeToFileBlock, linkOptions);
-
-            foreach (var file in files)
-            {
-                await readFromFileBlock.SendAsync(file);
+                namespaces.Add(namespaceDeclaration);
             }
 
-            readFromFileBlock.Complete();
+            var resultCompilationUnit = SyntaxFactory.CompilationUnit(
+                new SyntaxList<ExternAliasDirectiveSyntax>(),
+                SyntaxFactory.List(usings),
+                new SyntaxList<AttributeListSyntax>(),
+                SyntaxFactory.List(namespaces));
 
-            writeToFileBlock.Completion.Wait();
+            resultCompilationUnit = (CompilationUnitSyntax)Formatter.Format(resultCompilationUnit, new AdhocWorkspace());
+            return resultCompilationUnit.ToString();
         }
 
         private static MethodDeclarationSyntax CreateTestMethodDeclaration(string methodName, TypeSyntax returnType, params ParameterSyntax[] methodParams)
