@@ -13,10 +13,11 @@ namespace Lepesh.Lepesh.Tests
     class LepeshClassTests
     {
         private LepeshClass _sut;
+        private Mock<int> _LepeshCal;
 
         LepeshClassTests()
         {
-            var _sut = new LepeshClass();
+            var _sut = new LepeshClass(default);
         }
 
         public void LepeshMethodTest()

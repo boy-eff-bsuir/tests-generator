@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Formatting;
+using Microsoft.CodeAnalysis.Options;
 using TestsGenerator.Core.Extensions;
 using TestsGenerator.Core.Services;
 
@@ -121,7 +122,8 @@ namespace TestsGenerator.Core
                 new SyntaxList<AttributeListSyntax>(),
                 SyntaxFactory.List(namespaces));
 
-            resultCompilationUnit = (CompilationUnitSyntax)Formatter.Format(resultCompilationUnit, new AdhocWorkspace());
+            var workspace = new AdhocWorkspace();
+            resultCompilationUnit = (CompilationUnitSyntax)Formatter.Format(resultCompilationUnit, workspace);
             return resultCompilationUnit.ToString();
         }
 
@@ -176,7 +178,6 @@ namespace TestsGenerator.Core
                 var defaultValue = param.Type.GetDefaultValue();
                 declarations.Add(CreateLocalDeclarationStatement(type, identifier, defaultValue));
             }
-
             var resultReturnType = returnType.ToString();
             StatementSyntax actPart;
             StatementSyntax assertExpectedInitializationPart = null;
@@ -184,7 +185,7 @@ namespace TestsGenerator.Core
             var arguments = methodParams.Select(x => SyntaxFactory.Argument(SyntaxFactory.IdentifierName(x.Identifier.ValueText)));
             if (resultReturnType == "void")
             {
-                actPart = SyntaxFactory.ExpressionStatement(InvocationExpression(_sut, methodName, arguments.ToArray()));
+                actPart = SyntaxFactory.ExpressionStatement(InvocationExpression(_sut, methodName, arguments.ToArray())).WithLeadingTrivia(SyntaxFactory.ElasticCarriageReturnLineFeed);
             }
             else
             {
@@ -276,13 +277,21 @@ namespace TestsGenerator.Core
             var args = new List<ArgumentSyntax>();
             foreach (var param in parameters)
             {
-                var identifier = param.Identifier.ValueText;
-                var type = param.Type.ToString();
-                var expression = CreateMockedObjectExpression(type);
-                var declaration = CreateLocalDeclarationStatement(type, identifier, expression);
-                //var declaration = CreateMockedDeclarationStatement(identifier, param.Type.ToString());
-                ctorParameters.Add(declaration);
-                args.Add(SyntaxFactory.Argument(SyntaxFactory.IdentifierName(identifier)));
+                if (param.Type.IsInterface(param.Identifier))
+                {
+                    var identifier = param.Identifier.ValueText;
+                    var type = param.Type.ToString();
+                    var expression = CreateMockedObjectExpression(type);
+                    var declaration = CreateLocalDeclarationStatement(type, identifier, expression);
+                    //var declaration = CreateMockedDeclarationStatement(identifier, param.Type.ToString());
+                    ctorParameters.Add(declaration);
+                    args.Add(SyntaxFactory.Argument(SyntaxFactory.IdentifierName(identifier)));
+                }
+                else
+                {
+                    args.Add(SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.DefaultLiteralExpression, SyntaxFactory.Token(SyntaxKind.DefaultKeyword))));
+                }
+                
             }
 
             var sutDeclaration = CreateSutDeclarationStatement(SyntaxFactory.SeparatedList(args), sutType);

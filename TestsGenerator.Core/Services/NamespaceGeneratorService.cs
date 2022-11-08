@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -46,18 +42,14 @@ namespace TestsGenerator.Core.Services
             return classGenerator.Select(x => new ClassDto(x.Name, x.ConstructorParams, x.Methods)).ToList();
         }
 
-        private static bool IsInterface(TypeSyntax type, SyntaxToken identifier)
-        {
-            var identifierName = "i" + identifier.ToString().ToLowerInvariant();
-            return identifierName.Equals(type.ToString().ToLowerInvariant(), StringComparison.OrdinalIgnoreCase);
-        }
+        
 
         private static ConstructorDeclarationSyntax GetPublicCtorWithInterfaceTypeParameters(ClassDeclarationSyntax classItem)
         {
             return classItem.Members
                     .OfType<ConstructorDeclarationSyntax>()
                     .Where(x => x.Modifiers.Select(x => x.Kind()).Contains(SyntaxKind.PublicKeyword))
-                    .MaxBy(x => x.ParameterList.Parameters.Where(x => IsInterface(x.Type, x.Identifier)).Count());
+                    .MaxBy(x => x.ParameterList.Parameters.Where(x => x.Type.IsInterface(x.Identifier)).Count());
         }
     }
 }

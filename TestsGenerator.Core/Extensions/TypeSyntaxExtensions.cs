@@ -1,4 +1,5 @@
-﻿using Microsoft.CodeAnalysis.CSharp;
+﻿using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System;
 using System.Collections.Generic;
@@ -33,6 +34,12 @@ namespace TestsGenerator.Core.Extensions
                                     SyntaxFactory.Token(SyntaxKind.DefaultKeyword));
                     }
             }
+        }
+    
+        public static bool IsInterface(this TypeSyntax typeSyntax, SyntaxToken identifier)
+        {
+            var identifierName = "i" + identifier.ToString().ToLowerInvariant();
+            return identifierName.Equals(typeSyntax.ToString().ToLowerInvariant(), StringComparison.OrdinalIgnoreCase);
         }
     }
 }

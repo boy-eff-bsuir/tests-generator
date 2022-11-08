@@ -10,6 +10,11 @@ namespace Faker.Core.Services
     {
         class LepeshClass
         {
+            public LepeshClass(int LepeshCal)
+            {
+
+            }
+            
             public void LepeshMethod()
             {
 
