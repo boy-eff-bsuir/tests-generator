@@ -1,23 +1,18 @@
 ﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using TestsGenerator.Core.Services;
+using TestsGenerator.Core.Providers;
 
 namespace TestsGenerator.Core
 {
     internal class CustomCSharpSyntaxRewriter : CSharpSyntaxRewriter
     {
         private string _currentNamespace;
-        private readonly NamespaceGeneratorService _namespaceGeneratorService;
+        private readonly NamespaceProvider _namespaceProvider;
 
-        public CustomCSharpSyntaxRewriter(NamespaceGeneratorService namespaceGeneratorService)
+        public CustomCSharpSyntaxRewriter(NamespaceProvider namespaceGenerator)
         {
-            _namespaceGeneratorService = namespaceGeneratorService;
+            _namespaceProvider = namespaceGenerator;
         }
 
         public override SyntaxNode VisitClassDeclaration(ClassDeclarationSyntax node)
@@ -27,7 +22,7 @@ namespace TestsGenerator.Core
                 _currentNamespace = ns.Name.ToString();
             }
 
-            _namespaceGeneratorService.AddNamespace(_currentNamespace, node);
+            _namespaceProvider.AddNamespace(_currentNamespace, node);
             base.VisitClassDeclaration(node);
             return node;
         }

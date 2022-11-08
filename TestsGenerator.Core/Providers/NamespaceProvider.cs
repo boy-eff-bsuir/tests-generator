@@ -4,11 +4,11 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using TestsGenerator.Core.DTOs;
 using TestsGenerator.Core.Extensions;
 
-namespace TestsGenerator.Core.Services
+namespace TestsGenerator.Core.Providers
 {
-    public class NamespaceGeneratorService
+    public class NamespaceProvider
     {
-        private readonly Dictionary<string, List<ClassGenerator>> _classesByNamespace = new();
+        private readonly Dictionary<string, List<ClassProvider>> _classesByNamespace = new();
         
         public List<string> Namespaces
         {
@@ -18,20 +18,15 @@ namespace TestsGenerator.Core.Services
             }
         }
 
-        public bool TryAddNamespace(string item)
-        {
-            return _classesByNamespace.TryAdd(item, new List<ClassGenerator>());
-        }
-
         public void AddNamespace(string namespaceItem, params ClassDeclarationSyntax[] classes)
         {
-            _classesByNamespace.TryAdd(namespaceItem, new List<ClassGenerator>());
+            _classesByNamespace.TryAdd(namespaceItem, new List<ClassProvider>());
             
             foreach (var classItem in classes)
             {
                 var ctorParams = GetPublicCtorWithInterfaceTypeParameters(classItem)?.ParameterList?.Parameters;
                 var methods = classItem.Members.OfType<MethodDeclarationSyntax>();
-                var classGenerator = new ClassGenerator(classItem.Identifier.ValueText, ctorParams.GetValueOrDefault(), methods.ToArray());
+                var classGenerator = new ClassProvider(classItem.Identifier.ValueText, ctorParams.GetValueOrDefault(), methods.ToArray());
                 _classesByNamespace[namespaceItem].Add(classGenerator);
             }
         }
@@ -41,8 +36,6 @@ namespace TestsGenerator.Core.Services
             var classGenerator = _classesByNamespace[namespaceItem];
             return classGenerator.Select(x => new ClassDto(x.Name, x.ConstructorParams, x.Methods)).ToList();
         }
-
-        
 
         private static ConstructorDeclarationSyntax GetPublicCtorWithInterfaceTypeParameters(ClassDeclarationSyntax classItem)
         {

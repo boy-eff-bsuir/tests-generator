@@ -1,20 +1,15 @@
 ﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using TestsGenerator.Core.DTOs;
 using TestsGenerator.Core.Extensions;
 
-namespace TestsGenerator.Core.Services
+namespace TestsGenerator.Core.Providers
 {
-    public class ClassGenerator
+    public class ClassProvider
     {
         private readonly Dictionary<string, MethodInfo> _methods = new();
 
-        public ClassGenerator(string name, SeparatedSyntaxList<ParameterSyntax> constructorParams, params MethodDeclarationSyntax[] methods)
+        public ClassProvider(string name, SeparatedSyntaxList<ParameterSyntax> constructorParams, params MethodDeclarationSyntax[] methods)
         {
             Name = name;
             ConstructorParams = constructorParams;

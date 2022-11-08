@@ -1,110 +1,71 @@
-﻿using System.Text;
-using Microsoft.CodeAnalysis;
+﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Formatting;
-using Microsoft.CodeAnalysis.Options;
+using TestsGenerator.Core.DTOs;
 using TestsGenerator.Core.Extensions;
-using TestsGenerator.Core.Services;
+using TestsGenerator.Core.Providers;
 
 namespace TestsGenerator.Core
 {
     public class Generator
     {
-        private const string _sut = "_sut";
+        private const string _xunit = "Xunit";
+        private const string _moq = "Moq";
+        
         public string Generate(string name, string content)
         {
-            
             SyntaxTree tree = CSharpSyntaxTree.ParseText(content);
-            System.Console.WriteLine($"Generating tests class for file {name}");
             var root = tree.GetCompilationUnitRoot();
+            var usings = InitializeUsings(root);
+            var namespaceProvider = InitializeNamespaceProvider(root);
+            var namespaceDeclarations = GenerateNamespaceDeclarations(namespaceProvider, usings);
 
+            var resultCompilationUnit = SyntaxGenerator.GenerateCompilationUnit(usings, namespaceDeclarations);
+
+            var workspace = new AdhocWorkspace();
+            resultCompilationUnit = (CompilationUnitSyntax)Formatter.Format(resultCompilationUnit, workspace);
+            return resultCompilationUnit.ToString();
+        }
+
+        private List<UsingDirectiveSyntax> InitializeUsings(CompilationUnitSyntax root)
+        {
             var usings = root.Usings.ToList();
-
-            var xunit = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName("Xunit"));
-            usings.Add(xunit);
-
-            var moq = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName("Moq"));
-            usings.Add(moq);
+            AddToUsings(usings, _xunit);
+            AddToUsings(usings, _moq);
             
-            var namespaceGeneratorService = new NamespaceGeneratorService();
-            var visitor = new CustomCSharpSyntaxRewriter(namespaceGeneratorService);
+            return usings;
+        }
+
+        private void AddToUsings(List<UsingDirectiveSyntax> usings, string identifier)
+        {
+            var directive = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName(identifier));
+            usings.Add(directive);
+        }
+
+        private NamespaceProvider InitializeNamespaceProvider(CompilationUnitSyntax root)
+        {
+            var namespaceProvider = new NamespaceProvider();
+            var visitor = new CustomCSharpSyntaxRewriter(namespaceProvider);
             visitor.Visit(root);
+            return namespaceProvider;
+        }
+
+        private List<MemberDeclarationSyntax> GenerateNamespaceDeclarations(NamespaceProvider namespaceProvider, List<UsingDirectiveSyntax> usings)
+        {
             var namespaces = new List<MemberDeclarationSyntax>();
-
-            foreach(var namespaceName in namespaceGeneratorService.Namespaces)
+            foreach(var namespaceName in namespaceProvider.Namespaces)
             {
-                var classes = namespaceGeneratorService.GetClassesByNamespace(namespaceName);
-                
-                var classDeclarations = new List<MemberDeclarationSyntax>();
+                var classes = namespaceProvider.GetClassesByNamespace(namespaceName);
 
-                foreach (var classDto in classes)
-                {
-                    if (!classDto.Methods.Any())
-                    {
-                        continue;
-                    }
-
-                    var members = new List<MemberDeclarationSyntax>();
-
-                    var publicModifier = SyntaxFactory.Token(SyntaxKind.PublicKeyword);
-                    var identifier = SyntaxFactory.Identifier(classDto.Name + "Tests");
-
-                    var sutField = CreatePrivateField(classDto.Name, _sut);
-                    members.Add(sutField);
-                
-                    foreach (var param in classDto.ConstructorParams)
-                    {
-                        var field = CreatePrivateField(Mocked(param.Type.ToString()), Underscored(param.Identifier.ValueText));
-                        members.Add(field);
-                    }
-
-                    var block = CreateTestClassConstructorBlock(classDto.Name, classDto.ConstructorParams.ToArray());
-
-                    var ctor = SyntaxFactory.ConstructorDeclaration(
-                        new SyntaxList<AttributeListSyntax>(),
-                        new SyntaxTokenList() { publicModifier },
-                        identifier,
-                        SyntaxFactory.ParameterList(),
-                        null,
-                        block
-                        );
-
-                    members.Add(ctor);
-
-                    foreach (var methodDto in classDto.Methods)
-                    {
-                        members.Add(
-                            CreateTestMethodDeclaration(methodDto.Name + "Test", methodDto.ReturnType, methodDto.Parameters.ToArray())
-                        );
-                        if (methodDto.Count > 1)
-                        {
-                            for (int i = 2; i <= methodDto.Count; i++)
-                            {
-                                members.Add(CreateTestMethodDeclaration(methodDto.  Name + i + "Test", methodDto.ReturnType, methodDto.Parameters.ToArray()));
-                            }
-                        }
-                    }
-
-                    var declarationToAdd = SyntaxFactory.ClassDeclaration(
-                        new SyntaxList<AttributeListSyntax>(),                  //Attribute list
-                        new SyntaxTokenList() { publicModifier },                     //Modifiers
-                        identifier,                                             //Identifier
-                        null,                                                   //Type parameter list
-                        null,                                                   //Base list
-                        new SyntaxList<TypeParameterConstraintClauseSyntax>(),  //Constraint clauses list
-                        SyntaxFactory.List<MemberDeclarationSyntax>(members));
-
-                        classDeclarations.Add(declarationToAdd);
-                }
+                var classDeclarations = GenerateClassDeclarations(classes);
 
                 if (classDeclarations.Count == 0)
                 {
                     continue;
                 }
 
-                var usingDirective = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName(namespaceName));
-                usings.Add(usingDirective);
+                AddToUsings(usings, namespaceName);
 
                 var namespaceDeclaration = SyntaxFactory.NamespaceDeclaration(
                     SyntaxFactory.IdentifierName(namespaceName + ".Tests"),
@@ -115,224 +76,78 @@ namespace TestsGenerator.Core
 
                 namespaces.Add(namespaceDeclaration);
             }
-
-            var resultCompilationUnit = SyntaxFactory.CompilationUnit(
-                new SyntaxList<ExternAliasDirectiveSyntax>(),
-                SyntaxFactory.List(usings),
-                new SyntaxList<AttributeListSyntax>(),
-                SyntaxFactory.List(namespaces));
-
-            var workspace = new AdhocWorkspace();
-            resultCompilationUnit = (CompilationUnitSyntax)Formatter.Format(resultCompilationUnit, workspace);
-            return resultCompilationUnit.ToString();
+            return namespaces;
         }
 
-        private static MethodDeclarationSyntax CreateTestMethodDeclaration(string methodName, TypeSyntax returnType, params ParameterSyntax[] methodParams)
+        private List<MemberDeclarationSyntax> GenerateClassDeclarations(List<ClassDto> classes)
         {
-            var block = CreateTestMethodBlock(methodName, returnType, methodParams);
-            return SyntaxFactory.MethodDeclaration(
-                new SyntaxList<AttributeListSyntax>(),
-                new SyntaxTokenList(SyntaxFactory.Token(SyntaxKind.PublicKeyword)),
-                SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.VoidKeyword)),
-                null,
-                SyntaxFactory.Identifier(methodName),
-                null,
-                SyntaxFactory.ParameterList(),
-                new SyntaxList<TypeParameterConstraintClauseSyntax>(),
-                block,
-                null);
+            var classDeclarations = new List<MemberDeclarationSyntax>();
+
+            foreach (var classDto in classes)
+                {
+                    if (!classDto.Methods.Any())
+                    {
+                        continue;
+                    }
+
+                    var classMembers = new List<MemberDeclarationSyntax>();
+                    var classIdentifier = SyntaxFactory.Identifier(classDto.Name + "Tests");
+
+                    AddPrivateFields(classDto, classMembers);
+                    AddConstructor(classIdentifier, classDto, classMembers);
+                    AddMethods(classDto, classMembers);
+
+                    var classDeclaration = SyntaxGenerator.GeneratePublicClass(classIdentifier, classMembers);
+
+                    classDeclarations.Add(classDeclaration);
+                }
+            return classDeclarations;
         }
+    
+        private void AddPrivateFields(ClassDto classDto, List<MemberDeclarationSyntax> classMembers)
+        {
+            var sutField = SyntaxGenerator.GeneratePrivateField(classDto.Name, "_sut");
+            classMembers.Add(sutField);
         
-        private static FieldDeclarationSyntax CreatePrivateField(string type, string name)
-        {
-            return SyntaxFactory.FieldDeclaration(
-                    SyntaxFactory.VariableDeclaration(
-                        SyntaxFactory.IdentifierName(type))
-                    .WithVariables(
-                        SyntaxFactory.SingletonSeparatedList<VariableDeclaratorSyntax>(
-                            SyntaxFactory.VariableDeclarator(
-                                SyntaxFactory.Identifier(name)))))
-                .WithModifiers(
-                    SyntaxFactory.TokenList(
-                        SyntaxFactory.Token(SyntaxKind.PrivateKeyword)));
-        }
-
-        private static string Mocked(string name)
-        {
-            return "Mock<" + name + ">";
-        }
-
-        private static string Underscored(string name)
-        {
-            return "_" + name;
-        }
-
-        private static BlockSyntax CreateTestMethodBlock(string methodName, TypeSyntax returnType, params ParameterSyntax[] methodParams)
-        {
-            var sb = new StringBuilder();
-            var declarations = new List<StatementSyntax>();
-            foreach(var param in methodParams)
+            foreach (var param in classDto.ConstructorParams)
             {
-                var type = param.Type.ToString();
-                var identifier = param.Identifier.ValueText;
-                var defaultValue = param.Type.GetDefaultValue();
-                declarations.Add(CreateLocalDeclarationStatement(type, identifier, defaultValue));
+                var field = SyntaxGenerator.GeneratePrivateField(param.Type.ToString().Mocked(), param.Identifier.ValueText.Underscored());
+                classMembers.Add(field);
             }
-            var resultReturnType = returnType.ToString();
-            StatementSyntax actPart;
-            StatementSyntax assertExpectedInitializationPart = null;
-            StatementSyntax assertCompareWithExpectedPart = null;
-            var arguments = methodParams.Select(x => SyntaxFactory.Argument(SyntaxFactory.IdentifierName(x.Identifier.ValueText)));
-            if (resultReturnType == "void")
+        }
+    
+        private void AddConstructor(SyntaxToken classIdentifier, ClassDto classDto, List<MemberDeclarationSyntax> classMembers)
+        {
+            var block = SyntaxGenerator.GenerateTestClassConstructorBlock(classDto.Name, classDto.ConstructorParams.ToArray());
+            var ctor = SyntaxGenerator.GeneratePublicConstructor(classIdentifier, block);
+
+            classMembers.Add(ctor);
+        }
+    
+        private void AddMethods(ClassDto classDto, List<MemberDeclarationSyntax> classMembers)
+        {
+            foreach (var methodDto in classDto.Methods)
             {
-                actPart = SyntaxFactory.ExpressionStatement(InvocationExpression(_sut, methodName, arguments.ToArray())).WithLeadingTrivia(SyntaxFactory.ElasticCarriageReturnLineFeed);
-            }
-            else
-            {
-                actPart = CreateLocalDeclarationStatement(resultReturnType, "result", InvocationExpression(_sut, methodName, arguments.ToArray()));
-                assertExpectedInitializationPart = CreateLocalDeclarationStatement(resultReturnType, "expected", returnType.GetDefaultValue());
-                assertCompareWithExpectedPart = CreateAssertCompareWithExpectedStatement();
-            }
-            declarations.Add(actPart);
-            if (assertExpectedInitializationPart != null)
-            {
-                declarations.Add(assertExpectedInitializationPart);
-                declarations.Add(assertCompareWithExpectedPart);
-            }
-            var failed = CreateAssertFailedStatement();
-            declarations.Add(failed);
+                var methodName = methodDto.Name + "Test";
+                var testMethod = SyntaxGenerator.GenerateTestMethodDeclaration(methodName,
+                        methodDto.ReturnType,
+                        methodDto.Parameters.ToArray());
 
-            return SyntaxFactory.Block(declarations);
-        }
-
-        private static LocalDeclarationStatementSyntax CreateLocalDeclarationStatement(string type, string identifier, ExpressionSyntax expressionSyntax)
-        {
-            return SyntaxFactory.LocalDeclarationStatement(
-                SyntaxFactory.VariableDeclaration(
-                    SyntaxFactory.IdentifierName(type))
-                .WithVariables(
-                    SyntaxFactory.SingletonSeparatedList<VariableDeclaratorSyntax>(
-                        SyntaxFactory.VariableDeclarator(
-                            SyntaxFactory.Identifier(
-                                SyntaxFactory.TriviaList(),
-                                SyntaxKind.TypeKeyword,
-                                identifier,
-                                identifier,
-                                SyntaxFactory.TriviaList()))
-                        .WithInitializer(
-                            SyntaxFactory.EqualsValueClause(
-                                expressionSyntax)))));
-        }
-
-        private static ExpressionStatementSyntax CreateAssertCompareWithExpectedStatement()
-        {
-            return SyntaxFactory.ExpressionStatement(InvocationExpression("Assert", "That",
-                        SyntaxFactory.Argument(
-                            SyntaxFactory.IdentifierName("result")),
-                        SyntaxFactory.Argument(
-                            SyntaxFactory.InvocationExpression(
-                                SyntaxFactory.MemberAccessExpression(
-                                    SyntaxKind.SimpleMemberAccessExpression,
-                                    SyntaxFactory.IdentifierName("Is"),
-                                    SyntaxFactory.IdentifierName("EqualTo")))
-                            .WithArgumentList(
-                                SyntaxFactory.ArgumentList(
-                                    SyntaxFactory.SingletonSeparatedList<ArgumentSyntax>(
-                                        SyntaxFactory.Argument(
-                                            SyntaxFactory.IdentifierName("expected"))))))));
-        }
-
-        private static ExpressionStatementSyntax CreateAssertFailedStatement()
-        {
-            return SyntaxFactory.ExpressionStatement(
-                        SyntaxFactory.InvocationExpression(
-                            SyntaxFactory.MemberAccessExpression(
-                                SyntaxKind.SimpleMemberAccessExpression,
-                                SyntaxFactory.IdentifierName("Assert"),
-                                SyntaxFactory.IdentifierName("Fail")))
-                        .WithArgumentList(
-                            SyntaxFactory.ArgumentList(
-                                SyntaxFactory.SingletonSeparatedList<ArgumentSyntax>(
-                                    SyntaxFactory.Argument(
-                                        SyntaxFactory.LiteralExpression(
-                                            SyntaxKind.StringLiteralExpression,
-                                            SyntaxFactory.Literal("autogenerated")))))));
-        }
-
-        private static ExpressionSyntax InvocationExpression(string className, string methodName, params ArgumentSyntax[] args)
-        {
-            return SyntaxFactory.InvocationExpression(
-                       SyntaxFactory.MemberAccessExpression(
-                           SyntaxKind.SimpleMemberAccessExpression,
-                           SyntaxFactory.IdentifierName(className),
-                           SyntaxFactory.IdentifierName(methodName)))
-                   .WithArgumentList(
-                       SyntaxFactory.ArgumentList(
-                           SyntaxFactory.SeparatedList<ArgumentSyntax>(args)));
-        }
-
-        private static BlockSyntax CreateTestClassConstructorBlock(string sutType, params ParameterSyntax[] parameters)
-        {
-            var ctorParameters = new List<LocalDeclarationStatementSyntax>();
-            var args = new List<ArgumentSyntax>();
-            foreach (var param in parameters)
-            {
-                if (param.Type.IsInterface(param.Identifier))
-                {
-                    var identifier = param.Identifier.ValueText;
-                    var type = param.Type.ToString();
-                    var expression = CreateMockedObjectExpression(type);
-                    var declaration = CreateLocalDeclarationStatement(type, identifier, expression);
-                    //var declaration = CreateMockedDeclarationStatement(identifier, param.Type.ToString());
-                    ctorParameters.Add(declaration);
-                    args.Add(SyntaxFactory.Argument(SyntaxFactory.IdentifierName(identifier)));
-                }
-                else
-                {
-                    args.Add(SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.DefaultLiteralExpression, SyntaxFactory.Token(SyntaxKind.DefaultKeyword))));
-                }
+                classMembers.Add(testMethod);
                 
+                if (methodDto.Count > 1)
+                {
+                    for (int i = 2; i <= methodDto.Count; i++)
+                    {
+                        methodName = methodDto.Name + i + "Test";
+                        testMethod = SyntaxGenerator.GenerateTestMethodDeclaration(methodName,
+                        methodDto.ReturnType,
+                        methodDto.Parameters.ToArray());
+                        
+                        classMembers.Add(testMethod);
+                    }
+                }
             }
-
-            var sutDeclaration = CreateSutDeclarationStatement(SyntaxFactory.SeparatedList(args), sutType);
-            ctorParameters.Add(sutDeclaration);
-            return SyntaxFactory.Block(ctorParameters);
-        }
-
-        private static ObjectCreationExpressionSyntax CreateMockedObjectExpression(string type)
-        {
-            return SyntaxFactory.ObjectCreationExpression(
-                        SyntaxFactory.GenericName(
-                            SyntaxFactory.Identifier("Mock"))
-                        .WithTypeArgumentList(
-                            SyntaxFactory.TypeArgumentList(
-                                SyntaxFactory.SingletonSeparatedList<TypeSyntax>(
-                                    SyntaxFactory.IdentifierName(type)))))
-                    .WithArgumentList(
-                        SyntaxFactory.ArgumentList());
-        }
-
-        private static LocalDeclarationStatementSyntax CreateSutDeclarationStatement(SeparatedSyntaxList<ArgumentSyntax> args, string type)
-        {
-            return SyntaxFactory.LocalDeclarationStatement(
-                        SyntaxFactory.VariableDeclaration(
-                            SyntaxFactory.IdentifierName(
-                                SyntaxFactory.Identifier(
-                                    SyntaxFactory.TriviaList(),
-                                    SyntaxKind.VarKeyword,
-                                    "var",
-                                    "var",
-                                    SyntaxFactory.TriviaList())))
-                        .WithVariables(
-                            SyntaxFactory.SingletonSeparatedList<VariableDeclaratorSyntax>(
-                                SyntaxFactory.VariableDeclarator(
-                                    SyntaxFactory.Identifier(_sut))
-                                .WithInitializer(
-                                    SyntaxFactory.EqualsValueClause(
-                                        SyntaxFactory.ObjectCreationExpression(
-                                            SyntaxFactory.IdentifierName(type))
-                                        .WithArgumentList(
-                                            SyntaxFactory.ArgumentList(args)))))));
         }
     }
 }

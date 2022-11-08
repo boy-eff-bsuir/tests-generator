@@ -1,16 +1,9 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 using TestsGenerator.Core.DTOs;
-using TestsGenerator.Core.Services;
+using TestsGenerator.Core.Providers;
 
 namespace TestsGenerator.Core.Extensions
 {
-    public static class ClassDeclarationSyntaxExtensions
+    public static class MethodInfoExtensions
     {
         public static MethodDto ToMethodDto(this KeyValuePair<string, MethodInfo> pair)
         {
