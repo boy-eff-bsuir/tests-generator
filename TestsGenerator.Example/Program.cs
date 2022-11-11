@@ -50,7 +50,7 @@ internal class Program
                     return;
                 }
                 System.Console.WriteLine($"Writing file {input.Name}");
-                using FileStream fileStream = File.Create(storePath + $"\\{input.Name}");
+                using FileStream fileStream = File.Create(storePath + $"\\{input.Name + "Tests"}");
                 byte[] info = new UTF8Encoding(true).GetBytes(input.Content);
                 await fileStream.WriteAsync(info);
             },

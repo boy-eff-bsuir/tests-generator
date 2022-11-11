@@ -25,7 +25,9 @@ namespace TestsGenerator.Core.Providers
             foreach (var classItem in classes)
             {
                 var ctorParams = GetPublicCtorWithInterfaceTypeParameters(classItem)?.ParameterList?.Parameters;
-                var methods = classItem.Members.OfType<MethodDeclarationSyntax>();
+                var methods = classItem.Members
+                    .OfType<MethodDeclarationSyntax>()
+                    .Where(x => x.Modifiers.Select(x => x.Kind()).Contains(SyntaxKind.PublicKeyword));
                 var classGenerator = new ClassProvider(classItem.Identifier.ValueText, ctorParams.GetValueOrDefault(), methods.ToArray());
                 _classesByNamespace[namespaceItem].Add(classGenerator);
             }
