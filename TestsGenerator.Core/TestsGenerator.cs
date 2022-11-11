@@ -13,14 +13,18 @@ namespace TestsGenerator.Core
         private const string _xunit = "Xunit";
         private const string _moq = "Moq";
         
-        public string Generate(string name, string content)
+        public static string Generate(string content)
         {
             SyntaxTree tree = CSharpSyntaxTree.ParseText(content);
             var root = tree.GetCompilationUnitRoot();
-            var usings = InitializeUsings(root);
+            
             var namespaceProvider = InitializeNamespaceProvider(root);
-            var namespaceDeclarations = GenerateNamespaceDeclarations(namespaceProvider, usings);
-
+            var usings = InitializeUsings(root, namespaceProvider);
+            var namespaceDeclarations = GenerateNamespaceDeclarations(namespaceProvider);
+            if (!namespaceDeclarations.Any())
+            {
+                return string.Empty;
+            }
             var resultCompilationUnit = SyntaxGenerator.GenerateCompilationUnit(usings, namespaceDeclarations);
 
             var workspace = new AdhocWorkspace();
@@ -28,22 +32,25 @@ namespace TestsGenerator.Core
             return resultCompilationUnit.ToString();
         }
 
-        private List<UsingDirectiveSyntax> InitializeUsings(CompilationUnitSyntax root)
+        private static List<UsingDirectiveSyntax> InitializeUsings(CompilationUnitSyntax root, NamespaceProvider namespaceProvider)
         {
             var usings = root.Usings.ToList();
             AddToUsings(usings, _xunit);
             AddToUsings(usings, _moq);
-            
+            foreach (var item in namespaceProvider.Namespaces)
+            {
+                AddToUsings(usings, item);
+            }
             return usings;
         }
 
-        private void AddToUsings(List<UsingDirectiveSyntax> usings, string identifier)
+        private static void AddToUsings(List<UsingDirectiveSyntax> usings, string identifier)
         {
             var directive = SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName(identifier));
             usings.Add(directive);
         }
 
-        private NamespaceProvider InitializeNamespaceProvider(CompilationUnitSyntax root)
+        private static NamespaceProvider InitializeNamespaceProvider(CompilationUnitSyntax root)
         {
             var namespaceProvider = new NamespaceProvider();
             var visitor = new CustomCSharpSyntaxRewriter(namespaceProvider);
@@ -51,7 +58,7 @@ namespace TestsGenerator.Core
             return namespaceProvider;
         }
 
-        private List<MemberDeclarationSyntax> GenerateNamespaceDeclarations(NamespaceProvider namespaceProvider, List<UsingDirectiveSyntax> usings)
+        private static List<MemberDeclarationSyntax> GenerateNamespaceDeclarations(NamespaceProvider namespaceProvider)
         {
             var namespaces = new List<MemberDeclarationSyntax>();
             foreach(var namespaceName in namespaceProvider.Namespaces)
@@ -65,8 +72,6 @@ namespace TestsGenerator.Core
                     continue;
                 }
 
-                AddToUsings(usings, namespaceName);
-
                 var namespaceDeclaration = SyntaxFactory.NamespaceDeclaration(
                     SyntaxFactory.IdentifierName(namespaceName + ".Tests"),
                     new SyntaxList<ExternAliasDirectiveSyntax>(),
@@ -79,7 +84,7 @@ namespace TestsGenerator.Core
             return namespaces;
         }
 
-        private List<MemberDeclarationSyntax> GenerateClassDeclarations(List<ClassDto> classes)
+        private static List<MemberDeclarationSyntax> GenerateClassDeclarations(List<ClassDto> classes)
         {
             var classDeclarations = new List<MemberDeclarationSyntax>();
 
@@ -93,9 +98,9 @@ namespace TestsGenerator.Core
                     var classMembers = new List<MemberDeclarationSyntax>();
                     var classIdentifier = SyntaxFactory.Identifier(classDto.Name + "Tests");
 
-                    AddPrivateFields(classDto, classMembers);
-                    AddConstructor(classIdentifier, classDto, classMembers);
-                    AddMethods(classDto, classMembers);
+                AddPrivateFields(classDto, classMembers);
+                AddConstructor(classIdentifier, classDto, classMembers);
+                AddMethods(classDto, classMembers);
 
                     var classDeclaration = SyntaxGenerator.GeneratePublicClass(classIdentifier, classMembers);
 
@@ -104,7 +109,7 @@ namespace TestsGenerator.Core
             return classDeclarations;
         }
     
-        private void AddPrivateFields(ClassDto classDto, List<MemberDeclarationSyntax> classMembers)
+        private static void AddPrivateFields(ClassDto classDto, List<MemberDeclarationSyntax> classMembers)
         {
             var sutField = SyntaxGenerator.GeneratePrivateField(classDto.Name, "_sut");
             classMembers.Add(sutField);
@@ -116,7 +121,7 @@ namespace TestsGenerator.Core
             }
         }
     
-        private void AddConstructor(SyntaxToken classIdentifier, ClassDto classDto, List<MemberDeclarationSyntax> classMembers)
+        private static void AddConstructor(SyntaxToken classIdentifier, ClassDto classDto, List<MemberDeclarationSyntax> classMembers)
         {
             var block = SyntaxGenerator.GenerateTestClassConstructorBlock(classDto.Name, classDto.ConstructorParams.ToArray());
             var ctor = SyntaxGenerator.GeneratePublicConstructor(classIdentifier, block);
@@ -124,12 +129,14 @@ namespace TestsGenerator.Core
             classMembers.Add(ctor);
         }
     
-        private void AddMethods(ClassDto classDto, List<MemberDeclarationSyntax> classMembers)
+        private static void AddMethods(ClassDto classDto, List<MemberDeclarationSyntax> classMembers)
         {
             foreach (var methodDto in classDto.Methods)
             {
-                var methodName = methodDto.Name + "Test";
-                var testMethod = SyntaxGenerator.GenerateTestMethodDeclaration(methodName,
+                var testMethodName = methodDto.Name + "Test";
+                var testMethod = SyntaxGenerator.GenerateTestMethodDeclaration(
+                        testMethodName,
+                        methodDto.Name,
                         methodDto.ReturnType,
                         methodDto.Parameters.ToArray());
 
@@ -139,10 +146,13 @@ namespace TestsGenerator.Core
                 {
                     for (int i = 2; i <= methodDto.Count; i++)
                     {
-                        methodName = methodDto.Name + i + "Test";
-                        testMethod = SyntaxGenerator.GenerateTestMethodDeclaration(methodName,
-                        methodDto.ReturnType,
-                        methodDto.Parameters.ToArray());
+                        testMethodName = methodDto.Name + i + "Test";
+                        testMethod = SyntaxGenerator.GenerateTestMethodDeclaration(
+                            testMethodName, 
+                            methodDto.Name,
+                            methodDto.ReturnType,
+                            methodDto.Parameters.ToArray()
+                        );
                         
                         classMembers.Add(testMethod);
                     }

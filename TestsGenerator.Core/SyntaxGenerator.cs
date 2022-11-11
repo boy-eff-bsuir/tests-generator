@@ -11,6 +11,7 @@ namespace TestsGenerator.Core
         private const string _sut = "_sut";
         
         public static MethodDeclarationSyntax GenerateTestMethodDeclaration(
+            string testMethodName,
             string methodName, 
             TypeSyntax returnType, 
             params ParameterSyntax[] methodParams)
@@ -21,7 +22,7 @@ namespace TestsGenerator.Core
                 new SyntaxTokenList(SyntaxFactory.Token(SyntaxKind.PublicKeyword)),
                 SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.VoidKeyword)),
                 null,
-                SyntaxFactory.Identifier(methodName),
+                SyntaxFactory.Identifier(testMethodName),
                 null,
                 SyntaxFactory.ParameterList(),
                 new SyntaxList<TypeParameterConstraintClauseSyntax>(),

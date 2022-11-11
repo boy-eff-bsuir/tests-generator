@@ -38,13 +38,17 @@ internal class Program
 
         var generateTestFileBlock = new TransformBlock<ReadFromFileOutput, GenerateTestFileOutput>(input =>
             {
-                var result = generator.Generate(input.Name, input.Content);
+                var result = Generator.Generate(input.Content);
                 return new GenerateTestFileOutput(input.Name, result);
             },
             generateTestFileOptions);
 
         var writeToFileBlock = new ActionBlock<GenerateTestFileOutput>(async input =>
             {
+                if (!input.Content.Any())
+                {
+                    return;
+                }
                 System.Console.WriteLine($"Writing file {input.Name}");
                 using FileStream fileStream = File.Create(storePath + $"\\{input.Name}");
                 byte[] info = new UTF8Encoding(true).GetBytes(input.Content);
